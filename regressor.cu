@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <fstream>
 #include <vector>
+#include <limits>
 
 using namespace std;
 
@@ -22,8 +23,12 @@ __global__ void MVMult(float* matrix, float* vector, float* result, int M, int N
 			result[row] += matrix[row * N + i] * vector[i];
 		}
         result[row] *= factor;
-        result[row] += bias;       
+        result[row] += bias;  
+        //printf("%.10f ", vector[row]);     
 	}
+    //if(blockIdx.x == 0 && threadIdx.x == 0){
+      //  printf("\n");
+    //}
 }
 
 __global__ void VVSub(float* vec1, float* vec2, float* res, int N)
@@ -144,7 +149,6 @@ public:
             cout << theta[i] << ", ";
         }
         cout << endl;
-        
         // clean up memory
         cudaFree(d_x_train);
         cudaFree(d_x_train_transpose);
@@ -212,17 +216,53 @@ void printMatrix(float *A, int m, int n)
     }
 }
 
+void findStat(float* A, int m, int n, int col,float& min, float& max, float& avg, float& range){
+    float sum = 0;
+    
+    for(int i = 0; i < m; i++){
+        sum += A[i * n + col];
+        //printf("%.2f  ", A[i * n + col]);
+        if(A[i * n + col] < min){
+            min = A[i * n + col];
+        }
+        if(A[i * n + col] > max){
+            max = A[i * n + col];
+            
+        }
+    }
+    avg = sum / m;
+    range = max - min;
+
+}
+void normalizeRow(float* A, int col,int m, int n){
+    float range = -1, max = std::numeric_limits<float>::min(),
+     min = std::numeric_limits<float>::max(),avg = 0;
+
+    findStat(A, m, n, col,min, max,avg,range);
+    for(int i = 0; i < m; i++){
+        A[i * n + col] = (A[i * n + col] - min) / range;
+    }
+
+
+}
+void normalizeAll(float* A, int m, int n){
+    for(int i = 0; i < n; i++){
+        normalizeRow(A, i, m, n);
+    }
+}
 int main()
 {
     int m, n, y_trainM, y_trainN, x_testM, x_testN;
 
     // example training data
     float *x_train = parseCSV("x_train.csv", m, n);
+    normalizeAll(x_train,m,n);
+    printMatrix(x_train,m,n);
     float *y_train = parseCSV("y_train.csv", y_trainM, y_trainN);
-
+    normalizeAll(y_train,y_trainM,y_trainN);
     // example test data
     float *x_test = parseCSV("x_test.csv", x_testM, x_testN);
-
+    normalizeAll(x_test,x_testM,x_testN);
     // train model
     Regressor regressor(m, n);                              // Create a new instance of the Regressor class with m and n
     float alpha = 0.01;                                     // Set the learning rate alpha
