@@ -23,12 +23,8 @@ __global__ void MVMult(float* matrix, float* vector, float* result, int M, int N
 			result[row] += matrix[row * N + i] * vector[i];
 		}
         result[row] *= factor;
-        result[row] += bias;  
-        //printf("%.10f ", vector[row]);     
+        result[row] += bias;     
 	}
-    //if(blockIdx.x == 0 && threadIdx.x == 0){
-      //  printf("\n");
-    //}
 }
 
 __global__ void VVSub(float* vec1, float* vec2, float* res, int N)
@@ -103,7 +99,7 @@ public:
         cudaMemcpy(d_y_train, y_train, m * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_theta, theta, n * sizeof(float), cudaMemcpyHostToDevice);
         
-        int block_size = m;
+        int block_size = 1024;
         int grid_size = (m + block_size - 1) / block_size;
         
         float bias = 0;
@@ -157,15 +153,20 @@ public:
         delete[] x_train_transpose;
     }
 
-    float predict(float *x_test)
+    float *predict(float *x_test, int size)
     {
-        float y_pred = 0.0;
+        float *y_pred = new float[size];
+
         // Calculate the predicted value using the learned parameters
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < size; i++)
         {
-            y_pred += theta[i] * x_test[i];
+            for (int j = 0; j < n; j++) 
+            {
+                y_pred[i] += theta[j] * x_test[i * n + j];
+            }
         }
-        // Return the predicted value
+        
+        // Return the predicted values
         return y_pred;
     }
 };
@@ -221,7 +222,7 @@ void findStat(float* A, int m, int n, int col,float& min, float& max, float& avg
     
     for(int i = 0; i < m; i++){
         sum += A[i * n + col];
-        //printf("%.2f  ", A[i * n + col]);
+
         if(A[i * n + col] < min){
             min = A[i * n + col];
         }
@@ -234,22 +235,23 @@ void findStat(float* A, int m, int n, int col,float& min, float& max, float& avg
     range = max - min;
 
 }
+
 void normalizeRow(float* A, int col,int m, int n){
     float range = -1, max = std::numeric_limits<float>::min(),
-     min = std::numeric_limits<float>::max(),avg = 0;
+    min = std::numeric_limits<float>::max(),avg = 0;
 
     findStat(A, m, n, col,min, max,avg,range);
     for(int i = 0; i < m; i++){
         A[i * n + col] = (A[i * n + col] - min) / range;
     }
-
-
 }
+
 void normalizeAll(float* A, int m, int n){
     for(int i = 0; i < n; i++){
         normalizeRow(A, i, m, n);
     }
 }
+
 int main()
 {
     int m, n, y_trainM, y_trainN, x_testM, x_testN;
@@ -257,24 +259,31 @@ int main()
     // example training data
     float *x_train = parseCSV("x_train.csv", m, n);
     normalizeAll(x_train,m,n);
-    printMatrix(x_train,m,n);
     float *y_train = parseCSV("y_train.csv", y_trainM, y_trainN);
-    normalizeAll(y_train,y_trainM,y_trainN);
+
     // example test data
     float *x_test = parseCSV("x_test.csv", x_testM, x_testN);
     normalizeAll(x_test,x_testM,x_testN);
+    
     // train model
     Regressor regressor(m, n);                              // Create a new instance of the Regressor class with m and n
     float alpha = 0.01;                                     // Set the learning rate alpha
-    int iterations = 10;                                  // Set the number of training iterations
+    int iterations = 1000;                                  // Set the number of training iterations
     regressor.fit(x_train, y_train, alpha, iterations); // Fit the model to the training data
 
     // test model
-    float y_pred = regressor.predict(x_test);                             // Predict the output for the test data point
-    cout << "Predicted value: " << y_pred << endl;                        // Print the predicted y value
+    int size = x_testM / n;
+    float *y_pred = regressor.predict(x_test, size);                             // Predict the output for the test data point
+
+    // Print predictions
+    for (int i = 0; i < size; i++) 
+    {
+        cout << y_pred[i] << endl;
+    }
 
     delete[] x_test;
     delete[] x_train;
     delete[] y_train;
+    delete[] y_pred;
     return 0; // Exit the program
 }
