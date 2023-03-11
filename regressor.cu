@@ -11,7 +11,7 @@
 
 using namespace std;
 
-__global__ void MVMult(float* matrix, float* vector, float* result, int M, int N, float bias ,float factor) 
+__global__ void MVMult(float* matrix, float* vector, float* result, int M, int N, float bias, float factor) 
 {
 	int row = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -19,9 +19,10 @@ __global__ void MVMult(float* matrix, float* vector, float* result, int M, int N
 	{	
 		for (int i = 0; i < N; i++) 
 		{
-			result[row] += matrix[row * N + i] * vector[i] * factor;
+			result[row] += matrix[row * N + i] * vector[i];
 		}
-        result[row] += bias;
+        result[row] *= factor;
+        result[row] += bias;       
 	}
 }
 
@@ -38,8 +39,8 @@ __global__ void VCMult(float* vec, float num, float* res, int N)
 {
     int index = threadIdx.x + blockIdx.x * blockDim.x;
     if (index < N)
-    {
-        res[index] = vec[index] * num;
+    {      
+        res[index] -= vec[index] * num;
     }
 }
 
@@ -53,7 +54,7 @@ private:
     {
         for (int i = 0; i < m; i++) {
             for (int j = 0; j < n; j++) {
-                x_train_transpose[j * n + i] = x_train[i * n + j];
+                x_train_transpose[j * m + i] = x_train[i * n + j];
             }
         }
     } 
@@ -87,6 +88,7 @@ public:
                 *d_y_train, *d_y_pred, *d_diff,
                 *d_theta, *d_delta_theta;
         cudaMalloc(&d_x_train, m * n * sizeof(float));
+        cudaMalloc(&d_x_train_transpose, m * n * sizeof(float));
         cudaMalloc(&d_y_train, m * sizeof(float));
         cudaMalloc(&d_theta, n * sizeof(float));
 
@@ -96,7 +98,7 @@ public:
         cudaMemcpy(d_y_train, y_train, m * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_theta, theta, n * sizeof(float), cudaMemcpyHostToDevice);
         
-        int block_size = 1024;
+        int block_size = m;
         int grid_size = (m + block_size - 1) / block_size;
         
         float bias = 0;
@@ -106,11 +108,11 @@ public:
             cudaMalloc(&d_y_pred, m * sizeof(float));            
             MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
             
-            float *diff = new float[n];
+            float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
             cudaDeviceSynchronize();
             VVSub<<<grid_size, block_size>>>(d_y_pred, d_y_train, d_diff, m);
-            cudaMemcpy(diff, d_diff, n * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpy(diff, d_diff, m * sizeof(float), cudaMemcpyDeviceToHost);
             
             cudaMalloc(&d_delta_theta, n * sizeof(float));
             cudaDeviceSynchronize();
@@ -137,6 +139,11 @@ public:
         
         // Copy the final parameters from device back to host
         cudaMemcpy(theta, d_theta, n * sizeof(float), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < n; i++) {
+            cout << theta[i] << ", ";
+        }
+        cout << endl;
         
         // clean up memory
         cudaFree(d_x_train);
@@ -166,7 +173,8 @@ float *parseCSV(string fName, int &m, int &n)
     string item;
     vector<vector<float>> dataMatrix;
     getline(data, line); // skip the title
-    while (getline(data, line))
+    int i = 0;
+    while (getline(data, line) && i < 5)
     {
         vector<float> dataVec;
         string data;
@@ -177,6 +185,7 @@ float *parseCSV(string fName, int &m, int &n)
             dataVec.push_back(stof(item));
         }
         dataMatrix.push_back(dataVec);
+        i++;
     }
     m = dataMatrix.size();
     n = dataMatrix.at(0).size();
@@ -219,7 +228,7 @@ int main()
     // train model
     Regressor regressor(m, n);                              // Create a new instance of the Regressor class with m and n
     float alpha = 0.01;                                     // Set the learning rate alpha
-    int iterations = 1000;                                  // Set the number of training iterations
+    int iterations = 10;                                  // Set the number of training iterations
     regressor.fit(x_train, y_train, alpha, iterations); // Fit the model to the training data
 
     // test model
