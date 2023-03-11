@@ -36,12 +36,12 @@ __global__ void VVAdd(float* vec1, float* vec2, float* res, int N, int factor)
     }
 }
 
-__global__ void VCMult(float* vec, float num, float* res, int N, int factor)
+__global__ void VCMult(float* vec, float num, float* res, int N)
 {
     int index = threadIdx.x + blockIdx.x * blockDim.x;
     if (index < N)
     {
-        res[index] = vec[index] * num * factor;
+        res[index] = vec[index] * num;
     }
 }
 
