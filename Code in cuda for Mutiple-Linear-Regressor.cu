@@ -12,11 +12,11 @@
 using namespace std;
 
 
-__global__ void MVmult(float* matrix, float* vector, float* result, int N, float bias ,float factor) 
+__global__ void MVmult(float* matrix, float* vector, float* result, int M, int N, float bias ,float factor) 
 {
 	int row = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (row < N) 
+    if (row < M) 
 	{	
 		for (int i = 0; i < N; i++) 
 		{
@@ -56,7 +56,6 @@ __global__ void train(long double *x, long double *y, long double *theta, long d
         for (int i = 0; i < m; i++)
         {                                                                     // Loop through training examples
             sum += (theta[0] + theta[1] * x[i] + theta[2] * x[i + m]) - y[i]; // Compute sum of errors
-            printf("%.2f\n", sum);
         }
         if (tid == 0)
         {                                        // Check if thread is the first thread in the block
