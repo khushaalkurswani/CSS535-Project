@@ -173,8 +173,7 @@ float *parseCSV(string fName, int &m, int &n)
     string item;
     vector<vector<float>> dataMatrix;
     getline(data, line); // skip the title
-    int i = 0;
-    while (getline(data, line) && i < 5)
+    while (getline(data, line))
     {
         vector<float> dataVec;
         string data;
@@ -185,7 +184,6 @@ float *parseCSV(string fName, int &m, int &n)
             dataVec.push_back(stof(item));
         }
         dataMatrix.push_back(dataVec);
-        i++;
     }
     m = dataMatrix.size();
     n = dataMatrix.at(0).size();
