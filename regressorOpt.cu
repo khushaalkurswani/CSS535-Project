@@ -10,12 +10,12 @@
 #include "cublas_v2.h"
 #include <vector>
 #include <limits>
-
+#define  MAX_SHARE_SIZE 12000
 using namespace std;
 
 __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor, int numShared)
 {
-    __shared__ float cachedVector[12000];
+    __shared__ float cachedVector[MAX_SHARE_SIZE];
     int row = blockIdx.x * blockDim.x + threadIdx.x;
     int numRowsPerThread = (numShared + blockDim.x - 1) / blockDim.x;
     int startIndex = threadIdx.x * numRowsPerThread;
@@ -37,7 +37,7 @@ __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N
             result[row] += matrix[row * N + i + 3] * cachedVector[i + 3];
         }
 
-        for (;i < numShared && i < N; i++)
+        for (; i < N; i++)
         {
             result[row] += matrix[row * N + i] * vector[i];
         }
@@ -129,11 +129,10 @@ public:
         {
             // calculate y_pred
             cudaMalloc(&d_y_pred, m * sizeof(float));
-            int SHARED_LIMIT = 12000;
             int numShared = m;
-            if (numShared > SHARED_LIMIT)
+            if (numShared > MAX_SHARE_SIZE)
             {
-                numShared = SHARED_LIMIT;
+                numShared = MAX_SHARE_SIZE;
             }
             MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1, numShared);
             // MVMultLeftover<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
