@@ -9,6 +9,7 @@
 #include <fstream>
 #include <vector>
 #include <limits>
+#include <time.h>
 
 using namespace std;
 
@@ -288,6 +289,30 @@ void normalizeAll(float* A, int m, int n){
     }
 }
 */
+
+float calcFLOPS(float elapsed, int m, int n) {
+    // matrix vector dot product is 2mn and adding bias is m operations 
+    //      (multiply by factor is m operations) --> Unecessary operation for 
+    //      this step but part of MVMult kernel
+    int FLOP = 2 * m * n + 2 * m; 
+
+    // vector subtraction is m, matrix vector dot product is 2nm, and 
+    //      multiply by factor is n operations (adding bias is n 
+    //      operations) Unecessary operation for  this step but part of 
+    //      MVMult kernel
+    FLOP += m + 2 * n * m + n;
+
+    // vector sum is m operations and vector constant multiplication m operations
+    //      Reusing vector subtraction result from previous step so not included 
+    //      in FLOP calculation for this step
+    FLOP += 2 * m;
+
+    // constant multiplication is 1 operation and constant substraction is 1 operation
+    FLOP += 2;
+
+    return FLOP / elapsed;
+}
+
 int main()
 {
     int m, n, y_trainM, y_trainN, x_testM, x_testN;
@@ -305,7 +330,17 @@ int main()
     Regressor regressor(m, n);                          // Create a new instance of the Regressor class with m and n
     float alpha = 0.01;                                 // Set the learning rate alpha
     int iterations = 1000;                              // Set the number of training iterations
+
+    clock_t startTraining = clock(); // start training timer
     regressor.fit(x_train, y_train, alpha, iterations); // Fit the model to the training data
+    clock_t endTraining = clock(); // start training timer
+
+    float elapsedTraining = (endTraining - startTraining) / (CLOCKS_PER_SEC / pow(10, 3));
+	cout << "Training Time: " << elapsedTraining << " milliseconds" << endl;
+
+    float trainingFLOPS = calcFLOPS(elapsedTraining / 1000, m, n);
+    cout << "Training FLOPS: " << trainingFLOPS << " FLOPS" << endl;
+
 
     // test model
     int size = x_testM / n;

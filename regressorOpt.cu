@@ -7,49 +7,24 @@
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
-#include "cublas_v2.h"
 #include <vector>
 #include <limits>
-#define  MAX_SHARE_SIZE 12000
+#include <time.h>
+
 using namespace std;
 
 const int unroll_factor = 4;
 
-__global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor, int numShared)
+__global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor)
 {
-    __shared__ float cachedVector[MAX_SHARE_SIZE];
     int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int numRowsPerThread = numShared / blockDim.x;
-    int startIndex = threadIdx.x * numRowsPerThread;
-    int endIndex = startIndex + numRowsPerThread - 1;
-    for (int i = startIndex; i <= endIndex; i++)
-    {
-        cachedVector[i] = vector[i];
-    }
-    int numCopied = blockDim.x * numRowsPerThread;
 
-    __syncthreads();
     if (row < M)
     {
-        int i = 0;
-        for (; i < numCopied && i < N; i++)
-        {
-            result[row] += matrix[row * N + i] * cachedVector[i];
-        }
-
-        for (;i < numCopied && i + 3 < numCopied; i+=4)
-        {
-            result[row] += matrix[row * N + i] * cachedVector[i];
-            result[row] += matrix[row * N + i + 1] * cachedVector[i + 1];
-            result[row] += matrix[row * N + i + 2] * cachedVector[i + 2];
-            result[row] += matrix[row * N + i + 3] * cachedVector[i + 3];
-        }
-
-        for (; i < N; i++)
+        for (int i = 0; i < N; i++)
         {
             result[row] += matrix[row * N + i] * vector[i];
         }
-
         result[row] *= factor;
         result[row] += bias;
     }
@@ -153,42 +128,33 @@ public:
         cudaMemcpy(d_y_train, y_train, m * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_theta, theta, n * sizeof(float), cudaMemcpyHostToDevice);
 
-        int block_size = 1024;
-        int grid_size = (m + block_size - 1) / block_size;
+        int block_size = 512;
+        int elementsPerBlock = block_size * unroll_factor;
+        int grid_size = m / elementsPerBlock;
+
+        int offset = elementsPerBlock * grid_size;
+
+        int leftOver = m - grid_size * elementsPerBlock;
+        int leftOver_block_size = 1024;
+        int leftOver_grid_size = (leftOver + leftOver_block_size - 1) / leftOver_block_size;
 
         float bias = 0;
         for (int i = 0; i < iterations; i++)
         {
             // calculate y_pred
             cudaMalloc(&d_y_pred, m * sizeof(float));
-            int numShared = m;
-            if (numShared > MAX_SHARE_SIZE)
-            {
-                numShared = MAX_SHARE_SIZE;
-            }
-            MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1, numShared);
-            
-                        
+            MVMult<<<(m + block_size - 1) / block_size, 1024>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
+
             float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
-
-            int vv_block_size = 512;
-            int vv_elementsPerBlock = vv_block_size * unroll_factor;
-            int vv_grid_size = m / vv_elementsPerBlock;
-
-            int vv_offset = vv_elementsPerBlock * vv_grid_size;
-
-            int vv_leftOver = m - vv_grid_size * vv_elementsPerBlock;
-            int vv_leftOver_block_size = 1024;
-            int vv_leftOver_grid_size = (vv_leftOver + vv_leftOver_block_size - 1) / vv_leftOver_block_size;
             cudaDeviceSynchronize();
-            VVSub<<<vv_grid_size, vv_block_size>>>(d_y_pred, d_y_train, d_diff, m);
-            VVSubLeftOver<<<vv_leftOver_grid_size, vv_leftOver_block_size>>>(d_y_pred, d_y_train, d_diff, m, vv_offset);
+            VVSub<<<grid_size, block_size>>>(d_y_pred, d_y_train, d_diff, m);
+            VVSubLeftOver<<<leftOver_grid_size, leftOver_block_size>>>(d_y_pred, d_y_train, d_diff, m, offset);
             cudaMemcpy(diff, d_diff, m * sizeof(float), cudaMemcpyDeviceToHost);
 
             cudaMalloc(&d_delta_theta, n * sizeof(float));
             cudaDeviceSynchronize();
-            MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m, numShared);
+            MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
 
             float sum = 0;
             for (int j = 0; j < n; j++)
@@ -204,7 +170,7 @@ public:
 
             int vc_offset = vc_elementsPerBlock * vc_grid_size;
 
-            int vc_leftOver = n - grid_size * vc_elementsPerBlock;
+            int vc_leftOver = n - grid_size * elementsPerBlock;
             int vc_leftOver_block_size = min(vc_leftOver, 1024);
             int vc_leftOver_grid_size = (vc_leftOver + vc_leftOver_block_size - 1) / vc_leftOver_block_size;
 
@@ -326,14 +292,12 @@ void normalizeAll(float *A, int m, int n)
 {
     float range = -1, max = std::numeric_limits<float>::min(),
           min = std::numeric_limits<float>::max(), avg = 0;
-    findStat(A, m, n, min, max, avg, range);
-    for (int i = 0; i < m; i++)
-    {
-        for (int j = 0; j < n; j++)
-        {
-            A[i * n + j] = (A[i * n + j] - min) / range;
-        }
-    }
+          findStat(A, m, n, min, max, avg, range);
+          for(int i = 0; i < m; i++){
+            for(int j = 0; j < n; j++){
+                A[i * n + j] = (A[i * n + j] - min) / range;
+            }
+          }
 }
 /**
  void findStat(float* A, int m, int n, int col,float& min, float& max, float& avg, float& range){
@@ -371,6 +335,30 @@ void normalizeAll(float* A, int m, int n){
     }
 }
 */
+
+float calcFLOPS(float elapsed, int m, int n) {
+    // matrix vector dot product is 2mn and adding bias is m operations 
+    //      (multiply by factor is m operations) --> Unecessary operation for 
+    //      this step but part of MVMult kernel
+    int FLOP = 2 * m * n + 2 * m; 
+
+    // vector subtraction is m, matrix vector dot product is 2nm, and 
+    //      multiply by factor is n operations (adding bias is n 
+    //      operations) Unecessary operation for  this step but part of 
+    //      MVMult kernel
+    FLOP += m + 2 * n * m + n;
+
+    // vector sum is m operations and vector constant multiplication m operations
+    //      Reusing vector subtraction result from previous step so not included 
+    //      in FLOP calculation for this step
+    FLOP += 2 * m;
+
+    // constant multiplication is 1 operation and constant substraction is 1 operation
+    FLOP += 2;
+
+    return FLOP / elapsed;
+}
+
 int main()
 {
     int m, n, y_trainM, y_trainN, x_testM, x_testN;
@@ -388,7 +376,16 @@ int main()
     Regressor regressor(m, n);                          // Create a new instance of the Regressor class with m and n
     float alpha = 0.01;                                 // Set the learning rate alpha
     int iterations = 1000;                              // Set the number of training iterations
+
+    clock_t startTraining = clock(); // start training timer
     regressor.fit(x_train, y_train, alpha, iterations); // Fit the model to the training data
+    clock_t endTraining = clock(); // start training timer
+
+    double elapsedTraining = (endTraining - startTraining) / (CLOCKS_PER_SEC / pow(10, 3));
+	cout << "Training Time: " << elapsedTraining << " milliseconds" << endl;
+
+    float trainingFLOPS = calcFLOPS(elapsedTraining / 1000, m, n);
+    cout << "Training FLOPS: " << trainingFLOPS << " FLOPS" << endl;
 
     // test model
     int size = x_testM / n;
