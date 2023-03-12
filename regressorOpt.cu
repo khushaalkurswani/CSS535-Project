@@ -13,18 +13,23 @@
 
 using namespace std;
 
-__global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor)
+__global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor, int numShared)
 {
-    __shared__ float cachedVector[10000];
+    __shared__ float cachedVector[12000];
     int row = blockIdx.x * blockDim.x + threadIdx.x;
+    int numRowsPerThread = (numShared + blockDim.x - 1) / blockDim.x;
+    int startIndex = threadIdx.x * numRowsPerThread;
+    int endIndex = startIndex + numRowsPerThread - 1;
+    for (int i = startIndex; i <= endIndex && i < numShared; i++)
+    {
+        cachedVector[i] = vector[i];
+    }
 
+    __syncthreads();
     if (row < M)
     {
-        cachedVector[row] = vector[row];
-        __syncthreads();
-
-        for (int i = 0; i < N; i+=4)
-
+        int i = 0;
+        for (;i < numShared && i < N; i+=4)
         {
             result[row] += matrix[row * N + i] * cachedVector[i];
             result[row] += matrix[row * N + i + 1] * cachedVector[i + 1];
@@ -32,21 +37,11 @@ __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N
             result[row] += matrix[row * N + i + 3] * cachedVector[i + 3];
         }
 
-    }
-}
-
-__global__ void MVMultLeftover(float *matrix, float *vector, float *result, int M, int N, float bias, float factor)
-{
-
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int start = N - (N % 4);
-    if (row < M)
-    {
-
-        for (int i = 0; i < N; i++)
+        for (;i < numShared && i < N; i++)
         {
             result[row] += matrix[row * N + i] * vector[i];
         }
+
         result[row] *= factor;
         result[row] += bias;
     }
@@ -134,8 +129,14 @@ public:
         {
             // calculate y_pred
             cudaMalloc(&d_y_pred, m * sizeof(float));
-            MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
-            MVMultLeftover<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
+            int SHARED_LIMIT = 12000;
+            int numShared = m;
+            if (numShared > SHARED_LIMIT)
+            {
+                numShared = SHARED_LIMIT;
+            }
+            MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1, numShared);
+            // MVMultLeftover<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
             float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
             cudaDeviceSynchronize();
@@ -144,8 +145,8 @@ public:
 
             cudaMalloc(&d_delta_theta, n * sizeof(float));
             cudaDeviceSynchronize();
-            MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
-            MVMultLeftover<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
+            MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m, numShared);
+            // MVMultLeftover<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
             float sum = 0;
             for (int j = 0; j < n; j++)
             {
@@ -270,12 +271,14 @@ void normalizeAll(float *A, int m, int n)
 {
     float range = -1, max = std::numeric_limits<float>::min(),
           min = std::numeric_limits<float>::max(), avg = 0;
-          findStat(A, m, n, min, max, avg, range);
-          for(int i = 0; i < m; i++){
-            for(int j = 0; j < n; j++){
-                A[i * n + j] = (A[i * n + j] - min) / range;
-            }
-          }
+    findStat(A, m, n, min, max, avg, range);
+    for (int i = 0; i < m; i++)
+    {
+        for (int j = 0; j < n; j++)
+        {
+            A[i * n + j] = (A[i * n + j] - min) / range;
+        }
+    }
 }
 /**
  void findStat(float* A, int m, int n, int col,float& min, float& max, float& avg, float& range){
@@ -348,4 +351,3 @@ int main()
     delete[] y_pred;
     return 0; // Exit the program
 }
-
