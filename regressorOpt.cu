@@ -13,23 +13,31 @@
 #define  MAX_SHARE_SIZE 12000
 using namespace std;
 
+const int unroll_factor = 4;
+
 __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor, int numShared)
 {
     __shared__ float cachedVector[MAX_SHARE_SIZE];
     int row = blockIdx.x * blockDim.x + threadIdx.x;
-    int numRowsPerThread = (numShared + blockDim.x - 1) / blockDim.x;
+    int numRowsPerThread = numShared / blockDim.x;
     int startIndex = threadIdx.x * numRowsPerThread;
     int endIndex = startIndex + numRowsPerThread - 1;
-    for (int i = startIndex; i <= endIndex && i < numShared; i++)
+    for (int i = startIndex; i <= endIndex; i++)
     {
         cachedVector[i] = vector[i];
     }
+    int numCopied = blockDim.x * numRowsPerThread;
 
     __syncthreads();
     if (row < M)
     {
         int i = 0;
-        for (;i < numShared && i < N; i+=4)
+        for (; i < numCopied && i < N; i++)
+        {
+            result[row] += matrix[row * N + i] * cachedVector[i];
+        }
+
+        for (;i < numCopied && i + 3 < numCopied; i+=4)
         {
             result[row] += matrix[row * N + i] * cachedVector[i];
             result[row] += matrix[row * N + i + 1] * cachedVector[i + 1];
@@ -49,7 +57,19 @@ __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N
 
 __global__ void VVSub(float *vec1, float *vec2, float *res, int N)
 {
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    int index = (threadIdx.x + blockIdx.x * blockDim.x) * 4;
+    if (index < N && index + 3 < N)
+    {
+        res[index] = vec1[index] - vec2[index];
+        res[index + 1] = vec1[index + 1] - vec2[index + 1];
+        res[index + 2] = vec1[index + 2] - vec2[index + 2];
+        res[index + 3] = vec1[index + 3] - vec2[index + 3];
+    }
+}
+
+__global__ void VVSubLeftOver(float *vec1, float *vec2, float *res, int N, int offset)
+{
+    int index = threadIdx.x + blockIdx.x * blockDim.x + offset;
     if (index < N)
     {
         res[index] = vec1[index] - vec2[index];
@@ -58,7 +78,19 @@ __global__ void VVSub(float *vec1, float *vec2, float *res, int N)
 
 __global__ void VCMult(float *vec, float num, float *res, int N)
 {
-    int index = threadIdx.x + blockIdx.x * blockDim.x;
+    int index = (threadIdx.x + blockIdx.x * blockDim.x) * 4;
+    if (index < N && index + 3 < N)
+    {
+        res[index] -= vec[index] * num;
+        res[index + 1] -= vec[index + 1] * num;
+        res[index + 2] -= vec[index + 2] * num;
+        res[index + 3] -= vec[index + 3] * num;
+    }
+}
+
+__global__ void VCMultLeftOver(float *vec, float num, float *res, int N, int offset)
+{
+    int index = threadIdx.x + blockIdx.x * blockDim.x + offset;
     if (index < N)
     {
         res[index] -= vec[index] * num;
@@ -135,17 +167,29 @@ public:
                 numShared = MAX_SHARE_SIZE;
             }
             MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1, numShared);
-            // MVMultLeftover<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
+            
+                        
             float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
+
+            int vv_block_size = 512;
+            int vv_elementsPerBlock = vv_block_size * unroll_factor;
+            int vv_grid_size = m / vv_elementsPerBlock;
+
+            int vv_offset = vv_elementsPerBlock * vv_grid_size;
+
+            int vv_leftOver = m - vv_grid_size * vv_elementsPerBlock;
+            int vv_leftOver_block_size = 1024;
+            int vv_leftOver_grid_size = (vv_leftOver + vv_leftOver_block_size - 1) / vv_leftOver_block_size;
             cudaDeviceSynchronize();
-            VVSub<<<grid_size, block_size>>>(d_y_pred, d_y_train, d_diff, m);
+            VVSub<<<vv_grid_size, vv_block_size>>>(d_y_pred, d_y_train, d_diff, m);
+            VVSubLeftOver<<<vv_leftOver_grid_size, vv_leftOver_block_size>>>(d_y_pred, d_y_train, d_diff, m, vv_offset);
             cudaMemcpy(diff, d_diff, m * sizeof(float), cudaMemcpyDeviceToHost);
 
             cudaMalloc(&d_delta_theta, n * sizeof(float));
             cudaDeviceSynchronize();
             MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m, numShared);
-            // MVMultLeftover<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
+
             float sum = 0;
             for (int j = 0; j < n; j++)
             {
@@ -154,8 +198,20 @@ public:
             float delta_bias = sum / m;
             bias -= alpha * delta_bias;
 
+            int vc_block_size = min(n / unroll_factor, 1024);
+            int vc_elementsPerBlock = vc_block_size * unroll_factor;
+            int vc_grid_size = n / vc_elementsPerBlock;
+
+            int vc_offset = vc_elementsPerBlock * vc_grid_size;
+
+            int vc_leftOver = n - grid_size * vc_elementsPerBlock;
+            int vc_leftOver_block_size = min(vc_leftOver, 1024);
+            int vc_leftOver_grid_size = (vc_leftOver + vc_leftOver_block_size - 1) / vc_leftOver_block_size;
+
+            
             cudaDeviceSynchronize();
-            VCMult<<<1, n>>>(d_delta_theta, alpha, d_theta, n);
+            VCMult<<<vc_grid_size, vc_block_size>>>(d_delta_theta, alpha, d_theta, n);
+            VCMultLeftOver<<<vc_leftOver_grid_size, vc_leftOver_block_size>>>(d_delta_theta, alpha, d_theta, n, vc_offset);
             cudaDeviceSynchronize();
 
             // clean up memory
