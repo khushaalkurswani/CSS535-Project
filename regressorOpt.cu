@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include "cublas_v2.h"
 #include <vector>
 #include <limits>
 
@@ -14,10 +15,34 @@ using namespace std;
 
 __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor)
 {
+    __shared__ float cachedVector[10000];
     int row = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (row < M)
     {
+        cachedVector[row] = vector[row];
+        __syncthreads();
+
+        for (int i = 0; i < N; i+=4)
+
+        {
+            result[row] += matrix[row * N + i] * cachedVector[i];
+            result[row] += matrix[row * N + i + 1] * cachedVector[i + 1];
+            result[row] += matrix[row * N + i + 2] * cachedVector[i + 2];
+            result[row] += matrix[row * N + i + 3] * cachedVector[i + 3];
+        }
+
+    }
+}
+
+__global__ void MVMultLeftover(float *matrix, float *vector, float *result, int M, int N, float bias, float factor)
+{
+
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    int start = N - (N % 4);
+    if (row < M)
+    {
+
         for (int i = 0; i < N; i++)
         {
             result[row] += matrix[row * N + i] * vector[i];
@@ -110,7 +135,7 @@ public:
             // calculate y_pred
             cudaMalloc(&d_y_pred, m * sizeof(float));
             MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
-
+            MVMultLeftover<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
             float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
             cudaDeviceSynchronize();
@@ -120,7 +145,7 @@ public:
             cudaMalloc(&d_delta_theta, n * sizeof(float));
             cudaDeviceSynchronize();
             MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
-
+            MVMultLeftover<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
             float sum = 0;
             for (int j = 0; j < n; j++)
             {
@@ -323,3 +348,4 @@ int main()
     delete[] y_pred;
     return 0; // Exit the program
 }
+
