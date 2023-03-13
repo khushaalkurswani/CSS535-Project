@@ -604,9 +604,9 @@ int main()
     float *y_pred = regressor.predict(x_test, x_testM); // Predict the output for the test data point
 
     // Print predictions
-    cout << "Predict Value:              Actual Value: " << endl;
+    cout << "Predict Value:             Actual Value: " << endl;
     for (int i = 0; i < 10; i++){
-        printf("predict[%d]:  %38.2f Actual[%d]  %.2f \n", i, y_pred[i], i ,y_test[i]);
+        printf("predict[%d]:  %10.2f    Actual[%d]  %.2f \n", i, y_pred[i], i ,y_test[i]);
     }
     cout << "..."<< endl;
 
