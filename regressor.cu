@@ -301,7 +301,7 @@ void normalizeAllByFeature(float* A, int m, int n){
 }
 
 
-float calcFLOPS(float elapsed, int m, int n) {
+float calcFLOPS(float elapsed, int m, int n, int iterations) {
     // matrix vector dot product is 2mn and adding bias is m operations 
     //      (multiply by factor is m operations) --> Unecessary operation for 
     //      this step but part of MVMult kernel
@@ -320,6 +320,8 @@ float calcFLOPS(float elapsed, int m, int n) {
 
     // constant multiplication is 1 operation and constant substraction is 1 operation
     FLOP += 2;
+
+    FLOP *= iterations;
 
     return FLOP / elapsed;
 }
@@ -349,7 +351,7 @@ Regressor trainRegressor(int m, int n, float alpha, float iterations, float *x_t
     float elapsedTraining = (endTraining - startTraining) / (CLOCKS_PER_SEC / pow(10, 3));
 	cout << "Training Time: " << elapsedTraining << " milliseconds" << endl;
 
-    float trainingFLOPS = calcFLOPS(elapsedTraining / 1000, m, n);
+    float trainingFLOPS = calcFLOPS(elapsedTraining / 1000, m, n, iterations);
     cout << "Training FLOPS: " << trainingFLOPS << " FLOPS" << endl;
 
     return regressor;
