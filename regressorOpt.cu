@@ -30,7 +30,7 @@
 #include <numeric>
 #include <iomanip>  // setw
 using namespace std;
-
+#define MAX_SHARE_SIZE 12000
 const int unroll_factor = 4;
 
 /**
@@ -43,20 +43,42 @@ const int unroll_factor = 4;
  *@param bias a scalar value added to each element in the output vector
  *@param factor a scalar value multiplied to each element in the output vector
  */
-__global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor)
-{
-    int row = blockIdx.x * blockDim.x + threadIdx.x;
 
+__global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor, int numShared)
+{
+__shared__ float cachedVector[MAX_SHARE_SIZE];
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
+    int numRowsPerThread = numShared / blockDim.x;
+    int startIndex = threadIdx.x * numRowsPerThread;
+    int endIndex = startIndex + numRowsPerThread - 1;
+    for (int i = startIndex; i <= endIndex; i++)
+    {
+        cachedVector[i] = vector[i];
+    }
+    int numCopied = blockDim.x * numRowsPerThread;
+
+    __syncthreads();
     if (row < M)
     {
-        for (int i = 0; i < N; i++)
+        int i = 0;
+        for (; i < numCopied && i + 3 < N; i+=4)
+        {
+            result[row] += matrix[row * N + i] * cachedVector[i];
+            result[row] += matrix[row * N + i + 1] * cachedVector[i + 1];
+            result[row] += matrix[row * N + i + 2] * cachedVector[i + 2];
+            result[row] += matrix[row * N + i + 3] * cachedVector[i + 3];
+        }
+
+        for (; i < N; i++)
         {
             result[row] += matrix[row * N + i] * vector[i];
         }
+
         result[row] *= factor;
         result[row] += bias;
     }
 }
+
 /**
  *@brief This CUDA kernel function performs vector-vector subtraction
  *@param vec1  the first input vector array
@@ -214,7 +236,11 @@ public:
             // calculate y_pred
             int mv_grid_size = (m + mv_block_size - 1) / mv_block_size;
             cudaMalloc(&d_y_pred, m * sizeof(float));
-            MVMult<<<mv_grid_size, mv_block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
+            int numShare = m;
+            if(numShare > MAX_SHARE_SIZE){
+                numShare = MAX_SHARE_SIZE;
+            }
+            MVMult<<<mv_grid_size, mv_block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1, numShare);
 
             float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
@@ -235,7 +261,7 @@ public:
 
             cudaMalloc(&d_delta_theta, n * sizeof(float));
             cudaDeviceSynchronize();
-            MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
+            MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m, numShare);
 
             float sum = 0;
             for (int j = 0; j < n; j++)
