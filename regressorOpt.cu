@@ -385,21 +385,27 @@ float *parseCSV(string fName, int &m, int &n)
     return a;
 };
 /**
- *@brief Prints a 2D matrix of floats.
+ *@brief Prints a 2D matrix of floats (frist 10 X 10 )
  *@param A  a flatten matrix
  *@param m  number of rows in the matrix.
  *@param n  number of columns in the matrix.
  */
 void printMatrix(float *A, int m, int n)
 {
-    for (int i = 0; i < m; i++)
+    for (int i = 0; i < 10; i++)
     {
         for (int j = 0; j < n; j++)
         {
             cout << A[i * n + j] << " ";
+            if(j == 10){
+                cout << "..." <<endl;
+                break;
+            }
+            
         }
-        cout << endl;
+        cout <<endl;
     }
+    cout << "..."<< endl;
 }
 
 /**
@@ -571,6 +577,8 @@ int main()
 
     // example training data
     float *x_train = parseCSV("x_train.csv", m, n);
+    cout << "Top 10 rows of x_train: " << endl;
+    printMatrix(x_train, m, n);
     normalizeAllByFeature(x_train, m, n);
     float *y_train = parseCSV("y_train.csv", y_trainM, y_trainN);
 
@@ -592,21 +600,16 @@ int main()
     regressor.printWeights();
 
     // test model
-    int size = x_testM / n;
-    float *y_pred = regressor.predict(x_test, size); // Predict the output for the test data point
+    float *y_pred = regressor.predict(x_test, x_testM); // Predict the output for the test data point
 
     // Print predictions
-    cout << "Predict Value: " << endl;
-    for (int i = 0; i < size; i++){
-        if(i % 10 == 0){
-            cout << endl;
-        }
-        cout << setw(14) << left << y_pred[i];
-
+    cout << "Predict Value:              Actual Value: " << endl;
+    for (int i = 0; i < 10; i++){
+        printf("predict[%d]:  %38.2f Actual[%d]  %.2f \n", i, y_pred[i], i ,y_test[i]);
     }
-    cout << endl;
+    cout << "..."<< endl;
 
-    cout << "Model r-squared value: " << r_squared(y_test, y_pred, size) << endl;
+    cout << "Model r-squared value: " << r_squared(y_test, y_pred, y_testM) << endl;
 
     delete[] x_test;
     delete[] x_train;
