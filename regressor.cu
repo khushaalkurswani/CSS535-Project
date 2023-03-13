@@ -83,7 +83,8 @@ public:
         cudaFree(d_theta); // Free memory for theta on device
     }
 
-    void fit(float *x_train, float *y_train, float alpha, int iterations)
+    void fit(float *x_train, float *y_train, float alpha, int iterations, 
+        int mv_block_size, int vv_block_size)
     {
         float *x_train_transpose = new float[n * m];
         transpose(x_train, x_train_transpose);
@@ -102,20 +103,20 @@ public:
         cudaMemcpy(d_y_train, y_train, m * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_theta, theta, n * sizeof(float), cudaMemcpyHostToDevice);
 
-        int block_size = 1024;
-        int grid_size = (m + block_size - 1) / block_size;
-
         float bias = 0;
         for (int i = 0; i < iterations; i++)
         {
+            int mv_grid_size = (m + mv_block_size - 1) / mv_block_size;
             // calculate y_pred
             cudaMalloc(&d_y_pred, m * sizeof(float));
-            MVMult<<<grid_size, block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
+            MVMult<<<mv_grid_size, mv_block_size>>>(d_x_train, d_theta, d_y_pred, m, n, bias, 1);
 
             float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
+
+            int vv_grid_size = (m + mv_block_size - 1) / mv_block_size;
             cudaDeviceSynchronize();
-            VVSub<<<grid_size, block_size>>>(d_y_pred, d_y_train, d_diff, m);
+            VVSub<<<vv_grid_size, vv_block_size>>>(d_y_pred, d_y_train, d_diff, m);
             cudaMemcpy(diff, d_diff, m * sizeof(float), cudaMemcpyDeviceToHost);
 
             cudaMalloc(&d_delta_theta, n * sizeof(float));
@@ -144,11 +145,6 @@ public:
         // Copy the final parameters from device back to host
         cudaMemcpy(theta, d_theta, n * sizeof(float), cudaMemcpyDeviceToHost);
 
-        for (int i = 0; i < n; i++)
-        {
-            cout << theta[i] << ", ";
-        }
-        cout << endl;
         // clean up memory
         cudaFree(d_x_train);
         cudaFree(d_x_train_transpose);
@@ -172,6 +168,15 @@ public:
 
         // Return the predicted values
         return y_pred;
+    }
+
+    void printWeights() 
+    {
+        for (int i = 0; i < n; i++)
+        {
+            cout << theta[i] << ", ";
+        }
+        cout << endl;
     }
 };
 
@@ -313,6 +318,36 @@ float calcFLOPS(float elapsed, int m, int n) {
     return FLOP / elapsed;
 }
 
+
+void blocksExperiment(Regressor regressor, float alpha, float *x_train, float *y_train) 
+{
+    int numSizes = 4;
+    int blockSizeList[numSizes] = {128, 256, 512, 1024};
+
+    for (int i = 0; i < numSizes; i++) {
+        regressor.fit(x_train, y_train, alpha, 1, blockSizeList[i], blockSizeList[i]);
+    }
+
+}
+
+Regressor trainRegressor(int m, int n, float alpha, float iterations, float *x_train, float *y_train)
+{
+    Regressor regressor(m, n);
+    
+    clock_t startTraining = clock(); // start training timer
+    regressor.fit(x_train, y_train, alpha, iterations, 1024, 1024); // Fit the model to the training data
+    clock_t endTraining = clock(); // start training timer
+
+    float elapsedTraining = (endTraining - startTraining) / (CLOCKS_PER_SEC / pow(10, 3));
+	cout << "Training Time: " << elapsedTraining << " milliseconds" << endl;
+
+    float trainingFLOPS = calcFLOPS(elapsedTraining / 1000, m, n);
+    cout << "Training FLOPS: " << trainingFLOPS << " FLOPS" << endl;
+
+    return regressor;
+}
+
+
 int main()
 {
     int m, n, y_trainM, y_trainN, x_testM, x_testN;
@@ -326,22 +361,20 @@ int main()
     float *x_test = parseCSV("x_test.csv", x_testM, x_testN);
     normalizeAll(x_test, x_testM, x_testN);
 
-    // train model
-    Regressor regressor(m, n);                          // Create a new instance of the Regressor class with m and n
     float alpha = 0.01;                                 // Set the learning rate alpha
     int iterations = 1000;                              // Set the number of training iterations
 
-    clock_t startTraining = clock(); // start training timer
-    regressor.fit(x_train, y_train, alpha, iterations); // Fit the model to the training data
-    clock_t endTraining = clock(); // start training timer
+    // block experiment
+    Regressor experimentRegressor(m, n);    // Create a new instance of the Regressor class with m and n
+    blocksExperiment(experimentRegressor, alpha, x_train, y_train);
+                                  
 
-    float elapsedTraining = (endTraining - startTraining) / (CLOCKS_PER_SEC / pow(10, 3));
-	cout << "Training Time: " << elapsedTraining << " milliseconds" << endl;
-
-    float trainingFLOPS = calcFLOPS(elapsedTraining / 1000, m, n);
-    cout << "Training FLOPS: " << trainingFLOPS << " FLOPS" << endl;
-
-
+    // train model
+        // Create a new instance of the Regressor class with m and n
+    Regressor regressor = trainRegressor(m, n, alpha, iterations, x_train, y_train);
+    cout << "Regressor Model Weights: ";
+    regressor.printWeights();
+    
     // test model
     int size = x_testM / n;
     float *y_pred = regressor.predict(x_test, size); // Predict the output for the test data point
