@@ -42,6 +42,7 @@ const int unroll_factor = 4;
  *@param N the number of columns
  *@param bias a scalar value added to each element in the output vector
  *@param factor a scalar value multiplied to each element in the output vector
+ *@param numShared number of element should be in the share memory
  */
 
 __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor, int numShared)
