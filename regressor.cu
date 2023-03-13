@@ -377,7 +377,8 @@ int main()
 
     // example test data
     float *x_test = parseCSV("x_test.csv", x_testM, x_testN);
-    normalizeAll(x_test, x_testM, x_testN);
+    normalizeAllByFeature(x_test, x_testM, x_testN);
+
 
     float *y_test = parseCSV("y_test.csv", y_testM, y_testN);
 
