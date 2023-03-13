@@ -346,6 +346,7 @@ void normalizeAllByFeature(float* A, int m, int n){
     }
 }
 
+
 float calcFLOPS(float elapsed, int m, int n) {
     // matrix vector dot product is 2mn and adding bias is m operations 
     //      (multiply by factor is m operations) --> Unecessary operation for 
@@ -416,8 +417,7 @@ int main()
 
     // example training data
     float *x_train = parseCSV("x_train.csv", m, n);
-    normalizeAll(x_train, m, n);
-    normalizeCol(x_train, 0, m, n);
+    normalizeAllByFeature(x_train, m, n);
     float *y_train = parseCSV("y_train.csv", y_trainM, y_trainN);
 
     // example test data

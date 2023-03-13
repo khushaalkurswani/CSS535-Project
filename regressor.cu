@@ -48,7 +48,8 @@ __global__ void VCMult(float *vec, float num, float *res, int N)
 }
 
 class Regressor
-{ // Define Regressor class
+{ 
+// Define Regressor class
 private:
     float *theta, *d_theta; // Declare pointers for theta on host and device
     int m, n;                           // Declare number of training examples and features
@@ -371,8 +372,7 @@ int main()
 
     // example training data
     float *x_train = parseCSV("x_train.csv", m, n);
-    normalizeAll(x_train, m, n);
-    normalizeCol(x_train, 0, m, n);
+    normalizeAllByFeature(x_train, m, n);
     float *y_train = parseCSV("y_train.csv", y_trainM, y_trainN);
 
     // example test data
