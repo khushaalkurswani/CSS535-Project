@@ -231,6 +231,9 @@ void findStat(float *A, int m, int n, float &min, float &max, float &avg, float 
     {
         for (int j = 0; j < n; j++)
         {
+            if(j == 0){
+                continue;
+            }
             sum += A[i * n + j];
             if (A[i * n + j] < min)
             {
@@ -253,11 +256,14 @@ void normalizeAll(float *A, int m, int n)
           findStat(A, m, n, min, max, avg, range);
           for(int i = 0; i < m; i++){
             for(int j = 0; j < n; j++){
+                if(j == 0){
+                    continue;
+                }
                 A[i * n + j] = (A[i * n + j] - min) / range;
             }
           }
 }
-/**
+
  void findStat(float* A, int m, int n, int col,float& min, float& max, float& avg, float& range){
     float sum = 0;
 
@@ -277,7 +283,7 @@ void normalizeAll(float *A, int m, int n)
 
 }
 
-void normalizeRow(float* A, int col,int m, int n){
+void normalizeCol(float* A, int col,int m, int n){
     float range = -1, max = std::numeric_limits<float>::min(),
     min = std::numeric_limits<float>::max(),avg = 0;
 
@@ -287,12 +293,12 @@ void normalizeRow(float* A, int col,int m, int n){
     }
 }
 
-void normalizeAll(float* A, int m, int n){
+void normalizeAllByFeature(float* A, int m, int n){
     for(int i = 0; i < n; i++){
-        normalizeRow(A, i, m, n);
+        normalizeCol(A, i, m, n);
     }
 }
-*/
+
 
 float calcFLOPS(float elapsed, int m, int n) {
     // matrix vector dot product is 2mn and adding bias is m operations 
@@ -366,6 +372,7 @@ int main()
     // example training data
     float *x_train = parseCSV("x_train.csv", m, n);
     normalizeAll(x_train, m, n);
+    normalizeCol(x_train, 0, m, n);
     float *y_train = parseCSV("y_train.csv", y_trainM, y_trainN);
 
     // example test data
