@@ -1,3 +1,20 @@
+/**
+ * Anthony Bustamante, Jesse Leu, Khushaal Kurswani
+ * CSS 535 High Performance Computing
+ * Professor Erika Parsons
+ * 16 March 2023
+ *
+ * Final project - Accelerating Regression Model Training using GPU
+ * Naive code
+ *
+ * Compile in CLI using the following command:
+ *      nvcc regressor.cu
+ *
+ * To profile the kernel functions, nsight compute or nvprof can be used
+ * nsight compute CLI command:
+ *      ncu -o <profiler_output_file_name>  --set full <executable_file>
+ *
+ */
 #include <cuda_runtime.h> // Include CUDA runtime API header files
 #include <cuda.h>
 #include "device_launch_parameters.h"
@@ -14,6 +31,16 @@
 
 using namespace std;
 
+/**
+ *@brief This is a CUDA kernel function that performs matrix-vector multiplication
+ *@param matrix  input matrix
+ *@param vector  input vector array
+ *@param result  output vector array
+ *@param M the number of rows
+ *@param N the number of columns
+ *@param bias a scalar value added to each element in the output vector
+ *@param factor a scalar value multiplied to each element in the output vector
+ */
 __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N, float bias, float factor)
 {
     int row = blockIdx.x * blockDim.x + threadIdx.x;
@@ -28,7 +55,13 @@ __global__ void MVMult(float *matrix, float *vector, float *result, int M, int N
         result[row] += bias;
     }
 }
-
+/**
+ *@brief This CUDA kernel function performs vector-vector subtraction
+ *@param vec1  the first input vector array
+ *@param vec2  the second input vector array
+ *@param res  the output vector array
+ *@param N the length of the input vectors
+ */
 __global__ void VVSub(float *vec1, float *vec2, float *res, int N)
 {
     int index = threadIdx.x + blockIdx.x * blockDim.x;
@@ -37,7 +70,13 @@ __global__ void VVSub(float *vec1, float *vec2, float *res, int N)
         res[index] = vec1[index] - vec2[index];
     }
 }
-
+/**
+ *@brief This is a CUDA kernel function that performs vector-constant multiplication
+ *@param vec  input vector array
+ *@param num the constant scalar value to multiply
+ *@param res  the output array
+ *@param N the length of the input and output vectors
+ */
 __global__ void VCMult(float *vec, float num, float *res, int N)
 {
     int index = threadIdx.x + blockIdx.x * blockDim.x;
@@ -48,12 +87,18 @@ __global__ void VCMult(float *vec, float num, float *res, int N)
 }
 
 class Regressor
-{ 
-// Define Regressor class
+{
+    // Define Regressor class
 private:
     float *theta, *d_theta; // Declare pointers for theta on host and device
-    int m, n;                           // Declare number of training examples and features
+    int m, n;               // Declare number of training examples and features
 
+    /**
+     *@brief This function transposes a given 2D matrix of dimensions m x n
+     *and stores the result in a new 2D matrix of dimensions n x m.
+     *@param x_train a pointer to the input matrix array
+     *@param x_train_transpose a pointer to the output matrix array
+     */
     void transpose(float *x_train, float *x_train_transpose)
     {
         for (int i = 0; i < m; i++)
@@ -82,9 +127,22 @@ public:
         delete[] theta;    // Free memory for theta
         cudaFree(d_theta); // Free memory for theta on device
     }
-
-    void fit(float *x_train, float *y_train, float alpha, int iterations, 
-        int mv_block_size, int vv_block_size)
+    /**
+     *@brief This function trains a linear regression model using batch gradient descent optimization
+     *on the given training data (x_train, y_train). It uses CUDA parallelism to accelerate
+     *the matrix and vector computations. The optimization algorithm runs for the specified
+     *number of iterations, and updates the model parameters (theta) in each iteration. The
+     *learning rate (alpha) and block sizes (mv_block_size and vv_block_size) can also be
+     *specified. The function returns void, but updates the theta parameter in-place.
+     *@param x_train  array of training data input features
+     *@param y_train array of training data output labels
+     *@param alpha Learning rate for the gradient descent optimization
+     *@param iterations Number of iterations to run the optimization algorithm
+     *@param mv_block_size Block size to use for matrix-vector multiplication kernel
+     *@param vv_block_size Block size to use for vector-vector subtraction kernel
+     */
+    void fit(float *x_train, float *y_train, float alpha, int iterations,
+             int mv_block_size, int vv_block_size)
     {
         float *x_train_transpose = new float[n * m];
         transpose(x_train, x_train_transpose);
@@ -92,6 +150,7 @@ public:
         float *d_x_train, *d_x_train_transpose,
             *d_y_train, *d_y_pred, *d_diff,
             *d_theta, *d_delta_theta;
+        // Allocate memory in kernel
         cudaMalloc(&d_x_train, m * n * sizeof(float));
         cudaMalloc(&d_x_train_transpose, m * n * sizeof(float));
         cudaMalloc(&d_y_train, m * sizeof(float));
@@ -106,6 +165,7 @@ public:
         float bias = 0;
         for (int i = 0; i < iterations; i++)
         {
+            // calcualte matrix vector multiplication configuration
             int mv_grid_size = (m + mv_block_size - 1) / mv_block_size;
             // calculate y_pred
             cudaMalloc(&d_y_pred, m * sizeof(float));
@@ -113,7 +173,7 @@ public:
 
             float *diff = new float[m];
             cudaMalloc(&d_diff, m * sizeof(float));
-
+            // calcualte vector vector sub configuration
             int vv_grid_size = (m + mv_block_size - 1) / mv_block_size;
             cudaDeviceSynchronize();
             VVSub<<<vv_grid_size, vv_block_size>>>(d_y_pred, d_y_train, d_diff, m);
@@ -121,6 +181,7 @@ public:
 
             cudaMalloc(&d_delta_theta, n * sizeof(float));
             cudaDeviceSynchronize();
+            // calcualte matrix vector multiplication configuration
             MVMult<<<1, n>>>(d_x_train_transpose, d_diff, d_delta_theta, n, m, 0, 1.0 / m);
 
             float sum = 0;
@@ -152,7 +213,12 @@ public:
         cudaFree(d_theta);
         delete[] x_train_transpose;
     }
-
+    /**
+     *@brief Predicts the output values for a given set of input features using the learned model parameters.
+     *@param x_test the input features to be predicted
+     *@param size Number of samples in the input features.
+     *@return Pointer to an array containing the predicted output values.
+     */
     float *predict(float *x_test, int size)
     {
         float *y_pred = new float[size];
@@ -169,8 +235,10 @@ public:
         // Return the predicted values
         return y_pred;
     }
-
-    void printWeights() 
+    /**
+     *@brief  This function prints the learned weights of the linear regression model to the console
+     */
+    void printWeights()
     {
         for (int i = 0; i < n; i++)
         {
@@ -179,21 +247,27 @@ public:
         cout << endl;
     }
 };
-
+/**
+ *@brief  Parses a CSV file containing float values and returns them in a 1D array.
+ *@param fName A string representing the name of the CSV file to be parsed.
+ *@param m the number of rows in the CSV file.
+ *@param n  the number of columns in the CSV file.
+ *@return flatten matrix of floats containing the values from the CSV file.
+ */
 float *parseCSV(string fName, int &m, int &n)
 {
     ifstream data(fName);
     string line;
     string item;
     vector<vector<float>> dataMatrix;
-    getline(data, line); // skip the title
-    while (getline(data, line))
+    getline(data, line);        // skip the title
+    while (getline(data, line)) // read line
     {
         vector<float> dataVec;
         string data;
         stringstream lineStream(line);
 
-        while (getline(lineStream, item, ','))
+        while (getline(lineStream, item, ',')) // split
         {
             dataVec.push_back(stof(item));
         }
@@ -213,7 +287,12 @@ float *parseCSV(string fName, int &m, int &n)
 
     return a;
 };
-
+/**
+ *@brief Prints a 2D matrix of floats.
+ *@param A  a flatten matrix
+ *@param m  number of rows in the matrix.
+ *@param n  number of columns in the matrix.
+ */
 void printMatrix(float *A, int m, int n)
 {
     for (int i = 0; i < m; i++)
@@ -225,96 +304,92 @@ void printMatrix(float *A, int m, int n)
         cout << endl;
     }
 }
-void findStat(float *A, int m, int n, float &min, float &max, float &avg, float &range)
+/**
+ *@brief  Find min, max, avg, and range in a col of a matrix.
+ *@param A  a flatten matrix
+ *@param m  number of rows in the matrix.
+ *@param n  number of columns in the matrix.
+ *@param col the target col index
+ *@param min the min nuumber in the col
+ *@param max the max nuumber in the col
+ *@param avg the avg nuumber in the col
+ *@param range the max - min in the col
+ */
+void findStat(float *A, int m, int n, int col, float &min, float &max, float &avg, float &range)
 {
     float sum = 0;
+
     for (int i = 0; i < m; i++)
     {
-        for (int j = 0; j < n; j++)
-        {
-            if(j == 0){
-                continue;
-            }
-            sum += A[i * n + j];
-            if (A[i * n + j] < min)
-            {
-                min = A[i * n + j];
-            }
-            if (A[i * n + j] > max)
-            {
-                max = A[i * n + j];
-            }
-        }
-    }
-    avg = sum / (m * n);
-    range = max - min;
-}
-
-void normalizeAll(float *A, int m, int n)
-{
-    float range = -1, max = std::numeric_limits<float>::min(),
-          min = std::numeric_limits<float>::max(), avg = 0;
-          findStat(A, m, n, min, max, avg, range);
-          for(int i = 0; i < m; i++){
-            for(int j = 0; j < n; j++){
-                if(j == 0){
-                    continue;
-                }
-                A[i * n + j] = (A[i * n + j] - min) / range;
-            }
-          }
-}
-
- void findStat(float* A, int m, int n, int col,float& min, float& max, float& avg, float& range){
-    float sum = 0;
-
-    for(int i = 0; i < m; i++){
         sum += A[i * n + col];
 
-        if(A[i * n + col] < min){
+        if (A[i * n + col] < min)
+        {
             min = A[i * n + col];
         }
-        if(A[i * n + col] > max){
+        if (A[i * n + col] > max)
+        {
             max = A[i * n + col];
-
         }
     }
     avg = sum / m;
     range = max - min;
-
 }
-
-void normalizeCol(float* A, int col,int m, int n){
+/**
+ *@brief  normalize a col in a matrix
+ *@param A  a flatten matrix
+ *@param m  number of rows in the matrix.
+ *@param n  number of columns in the matrix.
+ *@param col the target col index
+ */
+void normalizeCol(float *A, int col, int m, int n)
+{
     float range = -1, max = std::numeric_limits<float>::min(),
-    min = std::numeric_limits<float>::max(),avg = 0;
+          min = std::numeric_limits<float>::max(), avg = 0;
 
-    findStat(A, m, n, col,min, max,avg,range);
-    for(int i = 0; i < m; i++){
+    findStat(A, m, n, col, min, max, avg, range);
+    for (int i = 0; i < m; i++)
+    {
         A[i * n + col] = (A[i * n + col] - min) / range;
     }
 }
-
-void normalizeAllByFeature(float* A, int m, int n){
-    for(int i = 0; i < n; i++){
+/**
+ *@brief  normalize a matrix feature by feature
+ *@param A  a flatten matrix
+ *@param m  number of rows in the matrix.
+ *@param n  number of columns in the matrix.
+ */
+void normalizeAllByFeature(float *A, int m, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
         normalizeCol(A, i, m, n);
     }
 }
 
-
-float calcFLOPS(float elapsed, int m, int n, int iterations) {
-    // matrix vector dot product is 2mn and adding bias is m operations 
-    //      (multiply by factor is m operations) --> Unecessary operation for 
+/**
+ *@brief Calculates the flops of operations.
+ *@param elapsed A float representing the elapsed time operation.
+ *@param m the number of rows in the matrix.
+ *@param n the number of columns in the matrix.
+ *@param iterations An integer representing the number of iterations performed.
+ *@return A float representing the FLOPS
+ */
+float calcFLOPS(float elapsed, int m, int n, int iterations)
+{
+    // matrix vector dot product is 2mn and adding bias is m operations
+    //      (multiply by factor is m operations) --> Unecessary operation for
     //      this step but part of MVMult kernel
-    int FLOP = 2 * m * n + 2 * m; 
+    int FLOP = 2 * m * n + 2 * m;
 
-    // vector subtraction is m, matrix vector dot product is 2nm, and 
-    //      multiply by factor is n operations (adding bias is n 
-    //      operations) Unecessary operation for  this step but part of 
+    // vector subtraction is m, matrix vector dot product is 2nm, and
+    //      multiply by factor is n operations (adding bias is n
+    //      operations) Unecessary operation for  this step but part of
     //      MVMult kernel
     FLOP += m + 2 * n * m + n;
 
     // vector sum is m operations and vector constant multiplication m operations
-    //      Reusing vector subtraction result from previous step so not included 
+    //      Reusing vector subtraction result from previous step so not included
     //      in FLOP calculation for this step
     FLOP += 2 * m;
 
@@ -326,41 +401,65 @@ float calcFLOPS(float elapsed, int m, int n, int iterations) {
     return FLOP / elapsed;
 }
 
-
-void blocksExperiment(int m, int n, float alpha, float *x_train, float *y_train) 
+/**
+ *@brief Performs test with varying block sizes for training the model.
+ *@param m the number of rows in input matrix.
+ *@param n the number of columns in input matrix.
+ *@param alpha learning rate
+ *@param x_train   x_train flatten matrix
+ *@param y_train  y_train flatten matrix
+ */
+void blocksExperiment(int m, int n, float alpha, float *x_train, float *y_train)
 {
     int numSizes = 4;
     int blockSizeList[numSizes] = {128, 256, 512, 1024};
 
-    Regressor regressor(m, n); 
+    Regressor regressor(m, n);
 
-    for (int i = 0; i < numSizes; i++) {
+    for (int i = 0; i < numSizes; i++)
+    {
         regressor.fit(x_train, y_train, alpha, 1, blockSizeList[i], blockSizeList[i]);
     }
-
 }
-
+/**
+ *@brief Trains a regression model using the input matrix and vector data, and returns the trained model.
+ *@param m the number of rows in the input matrix.
+ *@param n the number of columns in the input matrix.
+ *@param alpha learning rate
+ *@param iterations  the number of iterations to be performed during training.
+ *@param x_train x_train
+ *@param y_train y_train
+ *@return A Regressor object representing the trained regression model.
+ */
 Regressor trainRegressor(int m, int n, float alpha, float iterations, float *x_train, float *y_train)
 {
     Regressor regressor(m, n);
-    
-    clock_t startTraining = clock(); // start training timer
+
+    clock_t startTraining = clock();                                // start training timer
     regressor.fit(x_train, y_train, alpha, iterations, 1024, 1024); // Fit the model to the training data
-    clock_t endTraining = clock(); // start training timer
+    clock_t endTraining = clock();                                  // start training timer
 
     float elapsedTraining = (endTraining - startTraining) / (CLOCKS_PER_SEC / pow(10, 3));
-	cout << "Training Time: " << elapsedTraining << " milliseconds" << endl;
+    cout << "Training Time: " << elapsedTraining << " milliseconds" << endl;
 
     float trainingFLOPS = calcFLOPS(elapsedTraining / 1000, m, n, iterations);
     cout << "Training FLOPS: " << trainingFLOPS << " FLOPS" << endl;
 
     return regressor;
 }
-
-float r_squared(float y_test[], float y_pred[], int n) {
+/**
+ *@brief Calculates the R-squared value for a given set of true and predicted values.
+ *@param y_test an array of true target values
+ *@param y_pred an array of predicted target values
+ *@param n the length of the input arrays
+ *@return the R-squared value
+ */
+float r_squared(float y_test[], float y_pred[], int n)
+{
     float y_mean = accumulate(y_test, y_test + n, 0.0f) / n;
     float ss_tot = 0.0f, ss_res = 0.0f;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < n; i++)
+    {
         ss_tot += pow(y_test[i] - y_mean, 2);
         ss_res += pow(y_test[i] - y_pred[i], 2);
     }
@@ -381,20 +480,19 @@ int main()
     float *x_test = parseCSV("x_test.csv", x_testM, x_testN);
     normalizeAllByFeature(x_test, x_testM, x_testN);
 
-
     float *y_test = parseCSV("y_test.csv", y_testM, y_testN);
 
-    float alpha = 0.01;                                 // Set the learning rate alpha
-    int iterations = 1000;                              // Set the number of training iterations
+    float alpha = 0.01;    // Set the learning rate alpha
+    int iterations = 1000; // Set the number of training iterations
 
     // block experiment
-    blocksExperiment(m, n, alpha, x_train, y_train);                
+    blocksExperiment(m, n, alpha, x_train, y_train);
 
     // train model
     Regressor regressor = trainRegressor(m, n, alpha, iterations, x_train, y_train);
     cout << "Regressor Model Weights: ";
     regressor.printWeights();
-    
+
     // test model
     int size = x_testM / n;
     float *y_pred = regressor.predict(x_test, size); // Predict the output for the test data point
