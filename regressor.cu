@@ -227,6 +227,7 @@ public:
         // Calculate the predicted value using the learned parameters
         for (int i = 0; i < size; i++)
         {
+            y_pred[i] = 0;
             for (int j = 0; j < n; j++)
             {
                 y_pred[i] += theta[j] * x_test[i * n + j];
