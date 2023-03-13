@@ -500,7 +500,7 @@ int main()
     float *y_pred = regressor.predict(x_test, size); // Predict the output for the test data point
 
     // Print predictions
-    cout << "Predict Value: " << endl;
+    cout << "Predict Value: ";
     for (int i = 0; i < size; i++){
         if(i % 10 == 0){
             cout << endl;
