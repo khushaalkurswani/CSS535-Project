@@ -10,6 +10,7 @@
 #include <vector>
 #include <limits>
 #include <time.h>
+#include <numeric>
 
 using namespace std;
 
@@ -49,7 +50,7 @@ __global__ void VCMult(float *vec, float num, float *res, int N)
 class Regressor
 { // Define Regressor class
 private:
-    float *theta, *d_x, *d_y, *d_theta; // Declare pointers for theta, x, y, and theta on device
+    float *theta, *d_theta; // Declare pointers for theta on host and device
     int m, n;                           // Declare number of training examples and features
 
     void transpose(float *x_train, float *x_train_transpose)
@@ -78,8 +79,6 @@ public:
     ~Regressor() // Destructor
     {
         delete[] theta;    // Free memory for theta
-        cudaFree(d_x);     // Free memory for x on device
-        cudaFree(d_y);     // Free memory for y on device
         cudaFree(d_theta); // Free memory for theta on device
     }
 
@@ -319,10 +318,12 @@ float calcFLOPS(float elapsed, int m, int n) {
 }
 
 
-void blocksExperiment(Regressor regressor, float alpha, float *x_train, float *y_train) 
+void blocksExperiment(int m, int n, float alpha, float *x_train, float *y_train) 
 {
     int numSizes = 4;
     int blockSizeList[numSizes] = {128, 256, 512, 1024};
+
+    Regressor regressor(m, n); 
 
     for (int i = 0; i < numSizes; i++) {
         regressor.fit(x_train, y_train, alpha, 1, blockSizeList[i], blockSizeList[i]);
@@ -347,10 +348,20 @@ Regressor trainRegressor(int m, int n, float alpha, float iterations, float *x_t
     return regressor;
 }
 
+float r_squared(float y_test[], float y_pred[], int n) {
+    float y_mean = accumulate(y_test, y_test + n, 0.0f) / n;
+    float ss_tot = 0.0f, ss_res = 0.0f;
+    for (int i = 0; i < n; i++) {
+        ss_tot += pow(y_test[i] - y_mean, 2);
+        ss_res += pow(y_test[i] - y_pred[i], 2);
+    }
+    float r2 = 1 - (ss_res / ss_tot);
+    return r2;
+}
 
 int main()
 {
-    int m, n, y_trainM, y_trainN, x_testM, x_testN;
+    int m, n, y_trainM, y_trainN, x_testM, x_testN, y_testM, y_testN;
 
     // example training data
     float *x_train = parseCSV("x_train.csv", m, n);
@@ -361,16 +372,15 @@ int main()
     float *x_test = parseCSV("x_test.csv", x_testM, x_testN);
     normalizeAll(x_test, x_testM, x_testN);
 
+    float *y_test = parseCSV("y_test.csv", y_testM, y_testN);
+
     float alpha = 0.01;                                 // Set the learning rate alpha
     int iterations = 1000;                              // Set the number of training iterations
 
     // block experiment
-    Regressor experimentRegressor(m, n);    // Create a new instance of the Regressor class with m and n
-    blocksExperiment(experimentRegressor, alpha, x_train, y_train);
-                                  
+    blocksExperiment(m, n, alpha, x_train, y_train);                
 
     // train model
-        // Create a new instance of the Regressor class with m and n
     Regressor regressor = trainRegressor(m, n, alpha, iterations, x_train, y_train);
     cout << "Regressor Model Weights: ";
     regressor.printWeights();
@@ -385,9 +395,12 @@ int main()
         cout << y_pred[i] << endl;
     }
 
+    cout << "Model r-squared value: " << r_squared(y_test, y_pred, size) << endl;
+
     delete[] x_test;
     delete[] x_train;
     delete[] y_train;
     delete[] y_pred;
+    delete[] y_test;
     return 0; // Exit the program
 }
