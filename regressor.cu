@@ -28,6 +28,7 @@
 #include <limits>
 #include <time.h>
 #include <numeric>
+#include <iomanip>   // setw
 
 using namespace std;
 
@@ -242,7 +243,8 @@ public:
     {
         for (int i = 0; i < n; i++)
         {
-            cout << theta[i] << ", ";
+            printf("Feature[%d] Weight: %.6f ", i, theta[i]);
+            
         }
         cout << endl;
     }
@@ -490,7 +492,7 @@ int main()
 
     // train model
     Regressor regressor = trainRegressor(m, n, alpha, iterations, x_train, y_train);
-    cout << "Regressor Model Weights: ";
+    cout << "Regressor Model Weights: " << endl;
     regressor.printWeights();
 
     // test model
@@ -498,10 +500,15 @@ int main()
     float *y_pred = regressor.predict(x_test, size); // Predict the output for the test data point
 
     // Print predictions
-    for (int i = 0; i < size; i++)
-    {
-        cout << y_pred[i] << endl;
+    cout << "Predict Value: " << endl;
+    for (int i = 0; i < size; i++){
+        if(i % 10 == 0){
+            cout << endl;
+        }
+        cout << setw(14) << left << y_pred[i];
+
     }
+    cout << endl;
 
     cout << "Model r-squared value: " << r_squared(y_test, y_pred, size) << endl;
 
