@@ -232,6 +232,7 @@ public:
             {
                 y_pred[i] += theta[j] * x_test[i * n + j];
             }
+            y_pred[i] *= 10;
         }
 
         // Return the predicted values
