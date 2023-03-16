@@ -90,7 +90,7 @@ __shared__ float cachedVector[MAX_SHARE_SIZE];
 __global__ void VVSub(float *vec1, float *vec2, float *res, int N)
 {
     int index = (threadIdx.x + blockIdx.x * blockDim.x) * 4;
-    if (index < N && index + 3 < N) // loop unrolling
+    if (index + 3 < N) // loop unrolling
     {
         res[index] = vec1[index] - vec2[index];
         res[index + 1] = vec1[index + 1] - vec2[index + 1];
@@ -127,7 +127,7 @@ __global__ void VVSubLeftOver(float *vec1, float *vec2, float *res, int N, int o
 __global__ void VCMult(float *vec, float num, float *res, int N)
 {
     int index = (threadIdx.x + blockIdx.x * blockDim.x) * 4;
-    if (index < N && index + 3 < N) // loop unrolling
+    if (index + 3 < N) // loop unrolling
     {
         res[index] -= vec[index] * num;
         res[index + 1] -= vec[index + 1] * num;
